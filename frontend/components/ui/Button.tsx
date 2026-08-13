@@ -25,7 +25,7 @@ export default function Button({
     bgClass = "bg-accent/10 border border-accent/30";
     textClass = "text-accent";
   } else if (variant === "danger") {
-    bgClass = "bg-destructive";
+    bgClass = "bg-red-800";
     textClass = "text-white";
   }
 
