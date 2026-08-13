@@ -15,6 +15,7 @@ export default function TabsLayout() {
       <NativeTabs.Trigger name="alerts">
         <Label>Alerts</Label>
       </NativeTabs.Trigger>
+
     </NativeTabs>
   );
 }
