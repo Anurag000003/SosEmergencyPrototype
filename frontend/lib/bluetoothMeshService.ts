@@ -20,6 +20,19 @@ class BluetoothMeshService {
   private packetListeners: Set<(packet: MeshPacket) => void> = new Set();
   private intervalId: any = null;
 
+  private logs: string[] = [];
+
+  private addLog(msg: string) {
+    const timestamp = new Date().toLocaleTimeString();
+    const logStr = `[${timestamp}] ${msg}`;
+    console.log(logStr);
+    this.logs.push(logStr);
+  }
+
+  public getLogs(): string[] {
+    return this.logs;
+  }
+
   public initialize(
     userId: string,
     userName: string,
@@ -37,7 +50,7 @@ class BluetoothMeshService {
   public updateIdentity(isHealthWorker: boolean, isDoctor: boolean) {
     this.isHealthWorker = isHealthWorker;
     this.isDoctor = isDoctor;
-    console.log(`[MeshService] Identity updated: HW=${isHealthWorker}, MD=${isDoctor}`);
+    this.addLog(`[MeshService] Identity updated: HW=${isHealthWorker}, MD=${isDoctor}`);
   }
 
   public subscribeToPeers(callback: (peers: MeshPeer[]) => void) {
@@ -58,7 +71,7 @@ class BluetoothMeshService {
     const recipientType = this.isDoctor ? "BROADCAST" : this.isHealthWorker ? "DOCTOR" : "HEALTH_WORKER";
     const packet = meshProtocol.generatePacket(this.myId, this.myName, message, recipientType, hasMedia);
     
-    console.log(`[MeshService] Dispatching emergency SOS packet: ${packet.packetId} target: ${recipientType}`);
+    this.addLog(`[MeshService] Dispatching emergency SOS packet: ${packet.packetId} target: ${recipientType}`);
     
     // Simulate immediate relay to connected peers
     this.simulateRelayOutput(packet);
@@ -107,14 +120,14 @@ class BluetoothMeshService {
   private simulateRelayOutput(packet: MeshPacket) {
     // Send to all connected peers simulation
     this.connectedPeers.forEach((peer) => {
-      console.log(`[MeshService] Transmission: Relay packet ${packet.packetId} -> ${peer.name} (RSSI: ${peer.rssi}dBm)`);
+      this.addLog(`[MeshService] Transmission: Relay packet ${packet.packetId} -> ${peer.name} (RSSI: ${peer.rssi}dBm)`);
       
       // If the peer is a medical node and recipient matches, mark it delivered in simulation
       if (
         (packet.recipientType === "HEALTH_WORKER" && peer.isHealthWorker) ||
         (packet.recipientType === "DOCTOR" && peer.isDoctor)
       ) {
-        console.log(`[MeshService] Emergency Packet delivered to target health responder node: ${peer.name}`);
+        this.addLog(`[MeshService] Emergency Packet delivered to target health responder node: ${peer.name}`);
       }
     });
   }
