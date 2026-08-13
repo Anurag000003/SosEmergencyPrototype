@@ -1,0 +1,51 @@
+cd " bobaHack/AI-Powered-virtual-Clinic"
+Problem Statement 3: AI-Powered Virtual Clinic for Rural Healthcare
+Scenario
+
+A remote village is located several kilometres away from the nearest hospital. The village has a small health centre with a trained health worker and basic medical equipment, but a qualified doctor is not available every day.
+
+One day, a villager arrives with fever, weakness, and a minor injury. The health worker can record the patient's basic information and provide immediate first aid, but is unable to provide a complete medical consultation. Travelling to the nearest hospital may take several hours.
+
+The village therefore wants to establish an AI-assisted Virtual Clinic where the health worker can assess the patient, connect with a remote doctor when required, and provide appropriate basic/first-aid support under defined clinical protocols.
+
+The Problem
+
+Develop an AI-powered Virtual Village Clinic that assists a trained health worker in providing initial healthcare support and remote medical consultation to villagers who have limited access to doctors.
+
+The system should collect and understand information such as:
+
+Patient symptoms and duration
+Basic medical history
+Temperature, blood pressure, pulse, oxygen level, etc.
+Existing prescriptions and medical reports
+Images of minor injuries or visible symptoms
+Patient's age and other relevant information
+Preferred language
+
+Using this information, the AI should generate a structured patient summary and preliminary assessment for the health worker and remote doctor.
+
+The AI may also provide protocol-based suggestions for basic first aid and commonly used over-the-counter medicines, where legally and clinically appropriate, including clear dosage/safety checks and warnings. For example, for a minor wound, it could guide the health worker through appropriate basic wound-cleaning and dressing (bandage/plaster) steps.
+
+For cases requiring professional medical attention, the system should immediately recommend consultation with a qualified doctor or referral to a hospital rather than attempting to manage the condition independently.
+
+Expected AI Solution
+
+Participants should develop a virtual-clinic platform combining:
+
+AI-based symptom and patient-information analysis
+Speech-to-text and text-to-speech
+Medical-document OCR
+Patient-history summarization
+AI-assisted preliminary medicine/first-aid recommendations
+Basic first-aid guidance for trained health workers
+Remote doctor video/audio consultation
+Digital patient records
+Appointment and queue management
+Emergency-risk detection and hospital referral
+Doctor review and approval workflow
+
+The system should clearly distinguish between AI suggestions and a doctor's medical decision. Medicine recommendations should be restricted to appropriate, safety-checked situations and should not encourage self-medication or replace professional diagnosis.
+
+Core Challenge
+
+Can AI help transform a small village health centre into a reliable virtual clinic providing multilingual patient assessment, safe first-aid and preliminary treatment support, and rapid access to qualified doctors when needed?
