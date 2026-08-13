@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+
 from fastapi import FastAPI, File, UploadFile, Form, WebSocket, WebSocketDisconnect, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,7 +16,12 @@ from image_recognizer import ImageRecognizer
 from diet_plan import get_diet_plan
 from health_tips import get_disease_tips, get_preventive_tips, is_critical_emergency
 
+from api import sos, doctors
+
 app = FastAPI()
+
+app.include_router(sos.router)
+app.include_router(doctors.router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -196,3 +205,34 @@ async def send_sms(req: SMSRequest):
     except Exception as e:
         print("=== TEXTBELT ERROR ===", str(e))
         return {"success": False, "error": str(e)}
+
+import requests
+
+class PredictSkinRequest(BaseModel):
+    image_base64: str
+
+@app.post("/api/predict-skin")
+async def predict_skin(req: PredictSkinRequest):
+    try:
+        import base64
+        import tempfile
+        
+        img_data = base64.b64decode(req.image_base64)
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as temp:
+            temp.write(img_data)
+            temp_path = temp.name
+            
+        with open(temp_path, "rb") as f:
+            files = {"file": ("skin.jpg", f, "image/jpeg")}
+            response = requests.post("http://localhost:8080/predict", files=files)
+            
+        os.remove(temp_path)
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {"error": f"SkinAI backend error: {response.text}", "status_code": response.status_code}
+    except requests.exceptions.ConnectionError:
+        return {"error": "Could not connect to SkinAI backend. Make sure it is running on port 8080."}
+    except Exception as e:
+        return {"error": str(e)}
