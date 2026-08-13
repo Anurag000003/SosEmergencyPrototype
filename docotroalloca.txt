@@ -1,0 +1,754 @@
+Doctor Allocation Engine — Build Specification
+
+GOAL
+Build a production-ready doctor allocation system for the SOS workflow.
+
+The SOS is created by a VERIFIED healthcare worker, not by the patient.
+
+FLOW
+
+Healthcare Worker
+→ creates SOS
+→ attach worker verified profile + mobile + current location + patient case
+→ backend creates SOS
+→ allocation engine finds eligible doctors
+→ rank doctors
+→ notify selected doctors
+→ first valid acceptance wins
+→ assign doctor
+→ notify healthcare worker
+→ doctor can contact the healthcare worker
+
+CORE PRINCIPLE
+
+Doctor allocation must NOT simply select the nearest doctor.
+
+Allocation should consider:
+1. Doctor verification
+2. Real-time availability
+3. Working schedule
+4. Medical speciality / case relevance
+5. Distance from healthcare worker
+6. Doctor workload / current active SOS count
+7. Doctor response history
+8. Escalation if nobody accepts
+
+--------------------------------------------------
+1. DATABASE DESIGN
+--------------------------------------------------
+
+DOCTORS
+
+id
+user_id
+name
+phone
+specialities
+verification_status
+clinic_id
+created_at
+updated_at
+
+verification_status:
+PENDING
+VERIFIED
+SUSPENDED
+REJECTED
+
+
+DOCTOR_SCHEDULES
+
+id
+doctor_id
+day_of_week
+start_time
+end_time
+timezone
+is_active
+
+This represents the doctor's normal working hours.
+
+
+DOCTOR_PRESENCE
+
+id
+doctor_id
+status
+latitude
+longitude
+last_seen
+updated_at
+
+status:
+AVAILABLE
+BUSY
+OFFLINE
+ON_BREAK
+
+The schedule says whether a doctor SHOULD be working.
+Presence says whether the doctor is ACTUALLY available.
+
+Both must be checked.
+
+
+DOCTOR_SPECIALITIES
+
+id
+doctor_id
+speciality
+
+
+SOS_REQUESTS
+
+id
+created_by_worker_id
+patient_id
+clinic_id
+latitude
+longitude
+location_accuracy
+location_timestamp
+case_description
+severity
+required_speciality
+status
+assigned_doctor_id
+created_at
+updated_at
+
+status:
+OPEN
+ALLOCATING
+ASSIGNED
+RESOLVED
+CANCELLED
+ESCALATED
+
+
+SOS_CANDIDATES
+
+id
+sos_id
+doctor_id
+score
+distance_km
+speciality_match
+notification_status
+response
+notified_at
+responded_at
+
+notification_status:
+PENDING
+SENT
+DELIVERED
+
+response:
+NONE
+ACCEPTED
+DECLINED
+EXPIRED
+
+
+SOS_ASSIGNMENTS
+
+id
+sos_id
+doctor_id
+worker_id
+assigned_at
+accepted_at
+released_at
+status
+
+This keeps a permanent allocation history.
+
+--------------------------------------------------
+2. HEALTHCARE WORKER SOS
+--------------------------------------------------
+
+The worker sends:
+
+POST /api/sos
+
+Example:
+
+{
+  "patient_id": "...",
+  "case_description": "Patient has severe breathing difficulty",
+  "severity": "HIGH",
+  "required_speciality": "PULMONOLOGY",
+  "latitude": 26.4499,
+  "longitude": 80.3319,
+  "location_accuracy": 8.5
+}
+
+The backend should derive the worker identity from the authenticated token.
+
+Do NOT trust client-submitted worker_id.
+
+The SOS should also store a snapshot/reference of the worker's verified profile.
+
+The doctor should receive:
+- Worker name
+- Verified badge
+- Worker role
+- Worker mobile number
+- Current location
+- Clinic/facility
+- Patient case summary
+- Severity
+- Images/video if attached
+
+
+--------------------------------------------------
+3. ELIGIBLE DOCTOR FILTER
+--------------------------------------------------
+
+Before calculating a score, remove doctors who should NOT receive the SOS.
+
+Doctor must:
+
+✓ verification_status = VERIFIED
+✓ be inside their working schedule OR explicitly marked available
+✓ presence.status = AVAILABLE
+✓ heartbeat must be recent
+✓ not already exceed active SOS workload limit
+✓ match required speciality when speciality is critical
+✓ not be suspended
+✓ have valid notification token
+
+Example:
+
+if doctor is:
+VERIFIED + AVAILABLE + heartbeat < 90 sec
+→ eligible
+
+If heartbeat is older than 90 seconds:
+→ treat as OFFLINE
+
+
+--------------------------------------------------
+4. DOCTOR ALLOCATION SCORE
+--------------------------------------------------
+
+Do not hard-code one permanent formula forever.
+
+Start with:
+
+speciality_score = 50
+availability_score = 20
+distance_score = 20
+workload_score = 10
+
+Total = 100
+
+Example:
+
+Speciality:
+Exact match = 50
+Related speciality = 30
+General doctor = 15
+No match = 0
+
+Availability:
+AVAILABLE = 20
+BUSY = 0
+
+Distance:
+0–2 km = 20
+2–5 km = 15
+5–10 km = 10
+10–20 km = 5
+>20 km = 0
+
+Workload:
+0 active SOS = 10
+1 active SOS = 7
+2 active SOS = 3
+3+ active SOS = 0
+
+IMPORTANT:
+For HIGH/CRITICAL cases, speciality compatibility should be a hard requirement where possible, not merely a score.
+
+
+--------------------------------------------------
+5. LOCATION
+--------------------------------------------------
+
+Use the healthcare worker's current location as the primary routing point.
+
+Do NOT require the patient to have a phone or GPS.
+
+The worker's mobile device sends:
+latitude
+longitude
+accuracy
+timestamp
+
+Use PostGIS/geospatial queries if using PostgreSQL/Supabase.
+
+The system should be able to query:
+
+"Find verified available doctors within 5 km."
+
+Then expand:
+
+5 km → 10 km → 20 km
+
+only if required.
+
+
+--------------------------------------------------
+6. RING-BASED ALLOCATION
+--------------------------------------------------
+
+Do NOT send every SOS to every doctor.
+
+Use controlled waves.
+
+Wave 1:
+Top 3 eligible doctors.
+
+Wait 15 seconds.
+
+If nobody accepts:
+
+Wave 2:
+Next 5 eligible doctors.
+
+Wait 15–20 seconds.
+
+If nobody accepts:
+
+Wave 3:
+Expand search radius and notify additional eligible doctors.
+
+If nobody accepts:
+
+Mark SOS as ESCALATED.
+
+Notify clinic/admin/emergency escalation channel.
+
+
+--------------------------------------------------
+7. FIRST ACCEPTANCE WINS
+--------------------------------------------------
+
+This is critical.
+
+Multiple doctors may receive the same SOS.
+
+Only ONE can become the assigned doctor.
+
+Use an atomic database update / transaction.
+
+Concept:
+
+UPDATE sos_requests
+SET status = 'ASSIGNED',
+    assigned_doctor_id = doctor_id
+WHERE id = sos_id
+AND status IN ('OPEN', 'ALLOCATING');
+
+If the update succeeds:
+doctor won.
+
+If it affects zero rows:
+someone else already accepted.
+
+Never rely only on frontend checks.
+
+
+--------------------------------------------------
+8. ACCEPT / DECLINE API
+--------------------------------------------------
+
+POST /api/sos/{sos_id}/accept
+
+Backend must verify:
+
+✓ doctor is authenticated
+✓ doctor is verified
+✓ doctor is still eligible
+✓ SOS is still OPEN/ALLOCATING
+✓ doctor received the SOS
+✓ atomic assignment succeeds
+
+Then:
+
+SOS → ASSIGNED
+assigned_doctor_id → doctor
+
+Immediately notify:
+Healthcare Worker
+Other notified doctors
+
+
+POST /api/sos/{sos_id}/decline
+
+Record:
+
+doctor_id
+reason (optional)
+timestamp
+
+Then continue allocation.
+
+
+--------------------------------------------------
+9. REAL-TIME DOCTOR PRESENCE
+--------------------------------------------------
+
+Doctor app must provide:
+
+POST /api/doctor/presence
+
+{
+  "status": "AVAILABLE"
+}
+
+And heartbeat:
+
+POST /api/doctor/heartbeat
+
+Every 30–60 seconds.
+
+If no heartbeat for 90 seconds:
+
+AVAILABLE → OFFLINE
+
+When doctor becomes busy:
+
+AVAILABLE → BUSY
+
+When doctor finishes:
+
+BUSY → AVAILABLE
+
+
+--------------------------------------------------
+10. DOCTOR APP
+--------------------------------------------------
+
+Doctor dashboard should show:
+
+STATUS
+🟢 Available
+🟡 Busy
+⚫ Offline
+
+Incoming SOS:
+
+🚨 HIGH PRIORITY SOS
+
+Healthcare Worker:
+Rahul Sharma ✓ Verified
+
+Role:
+Healthcare Worker
+
+Distance:
+2.4 km
+
+Patient issue:
+Severe breathing difficulty
+
+Speciality:
+Pulmonology
+
+Worker mobile:
+[Call]
+
+Location:
+[View Location]
+
+[ACCEPT SOS]
+[DECLINE]
+
+
+--------------------------------------------------
+11. HEALTHCARE WORKER APP
+--------------------------------------------------
+
+After sending:
+
+SOS SENT
+Finding an available doctor...
+
+Then:
+
+ALLOCATING...
+
+Then:
+
+Doctor Found ✓
+
+Dr. Sharma
+Pulmonology
+Verified Doctor
+
+[Call Doctor]
+[Open Chat]
+[View Doctor]
+
+
+--------------------------------------------------
+12. NOTIFICATIONS
+--------------------------------------------------
+
+Use push notifications for doctors.
+
+Recommended:
+
+Firebase Cloud Messaging (FCM)
+
+Use realtime updates/WebSockets/Supabase Realtime for:
+
+SOS status
+assignment status
+doctor acceptance
+location updates
+
+Do not depend on polling every second.
+
+
+--------------------------------------------------
+13. LOCATION SHARING
+--------------------------------------------------
+
+When SOS is active:
+
+Worker location:
+latitude
+longitude
+timestamp
+accuracy
+
+The doctor should see the latest location.
+
+Do not continuously expose location after the SOS is closed.
+
+When:
+
+SOS → RESOLVED/CANCELLED
+
+stop live location sharing.
+
+
+--------------------------------------------------
+14. SECURITY
+--------------------------------------------------
+
+Important:
+
+✓ Healthcare worker must be authenticated.
+✓ Worker profile must be verified.
+✓ Doctor must be verified.
+✓ Role-based access control.
+✓ Doctors can only access SOS requests they received/are assigned to.
+✓ Workers can only access their own SOS requests.
+✓ Never expose unnecessary patient information.
+✓ Encrypt sensitive data in transit.
+✓ Keep audit logs.
+✓ Rate-limit SOS creation.
+✓ Prevent duplicate SOS requests.
+✓ Validate GPS coordinates.
+✓ Do not trust worker_id/doctor_id from frontend.
+
+
+--------------------------------------------------
+15. BACKEND STRUCTURE
+--------------------------------------------------
+
+backend/
+
+api/
+    sos.py
+    doctors.py
+    workers.py
+    clinics.py
+    notifications.py
+
+services/
+    sos_service.py
+    allocation_service.py
+    doctor_presence_service.py
+    location_service.py
+    notification_service.py
+
+workers/
+    sos_dispatcher.py
+
+models/
+    doctor.py
+    doctor_schedule.py
+    doctor_presence.py
+    sos.py
+    sos_candidate.py
+    sos_assignment.py
+
+utils/
+    distance.py
+    scoring.py
+
+
+--------------------------------------------------
+16. ALLOCATION SERVICE
+--------------------------------------------------
+
+Create one central function:
+
+allocate_doctor(sos_id)
+
+Responsibilities:
+
+1. Load SOS
+2. Find eligible doctors
+3. Filter by verification
+4. Check schedule
+5. Check presence
+6. Check heartbeat
+7. Check speciality
+8. Calculate distance
+9. Calculate workload
+10. Calculate score
+11. Sort candidates
+12. Save candidates
+13. Send first notification wave
+14. Start escalation process
+
+
+--------------------------------------------------
+17. BACKGROUND JOBS
+--------------------------------------------------
+
+Do NOT keep the HTTP request open while waiting for doctors.
+
+Use a background worker/queue.
+
+Recommended:
+
+FastAPI
++
+Redis
++
+Celery/RQ/Arq
+
+Flow:
+
+POST /api/sos
+       ↓
+Create SOS
+       ↓
+Queue allocation job
+       ↓
+Return SOS ID immediately
+       ↓
+Worker allocates doctors
+       ↓
+Notifications sent
+       ↓
+Wait for acceptance
+       ↓
+Escalate if required
+
+
+--------------------------------------------------
+18. MVP IMPLEMENTATION ORDER
+--------------------------------------------------
+
+PHASE 1
+✓ Doctor database
+✓ Doctor verification
+✓ Doctor schedule
+✓ Doctor presence
+✓ Healthcare worker authentication
+✓ SOS creation
+
+PHASE 2
+✓ Eligible doctor filtering
+✓ Distance calculation
+✓ Speciality matching
+✓ Allocation scoring
+✓ SOS candidate table
+
+PHASE 3
+✓ Push notifications
+✓ Doctor Accept/Decline
+✓ Atomic first-acceptance logic
+✓ Worker assignment UI
+
+PHASE 4
+✓ Ring-based allocation
+✓ Escalation
+✓ Redis/background worker
+✓ Live location
+
+PHASE 5
+✓ Audit logs
+✓ Analytics
+✓ Monitoring
+✓ Rate limiting
+✓ Failure recovery
+✓ Production deployment
+
+
+--------------------------------------------------
+19. IMPORTANT EDGE CASES
+--------------------------------------------------
+
+Handle:
+
+- Doctor goes offline after receiving SOS
+- Doctor accepts after another doctor already accepted
+- Worker cancels SOS
+- Doctor declines
+- Doctor loses internet
+- Push notification fails
+- No doctors available
+- Doctor becomes busy while SOS is being allocated
+- Worker changes location
+- Duplicate SOS
+- Two workers request help for the same patient
+- Database/network failure during acceptance
+
+
+--------------------------------------------------
+20. FINAL PRODUCT BEHAVIOUR
+--------------------------------------------------
+
+The system should ultimately behave like:
+
+Healthcare Worker
+       ↓
+Verified identity
+       ↓
+Current location
+       ↓
+Patient case
+       ↓
+SOS
+       ↓
+Allocation Engine
+       ↓
+Verified + Available + Suitable Doctors
+       ↓
+Rank by speciality + distance + workload
+       ↓
+Notify best candidates
+       ↓
+First valid acceptance wins
+       ↓
+Doctor assigned
+       ↓
+Worker gets doctor contact
+       ↓
+Doctor gets worker location/contact
+       ↓
+SOS resolved
+       ↓
+Assignment + audit history stored
+
+BUILD THIS ALLOCATION ENGINE AS A SEPARATE MODULE.
+Do not tightly couple doctor allocation logic to the frontend or the SOS UI.
