@@ -35,3 +35,8 @@ torchvision==0.28.0
 typing-inspection==0.4.4
 typing_extensions==4.16.0
 uvicorn==0.52.1
+supabase==2.3.4
+geopy==2.4.1
+pytest==8.1.1
+httpx==0.25.2
+pytest-asyncio==0.23.6
